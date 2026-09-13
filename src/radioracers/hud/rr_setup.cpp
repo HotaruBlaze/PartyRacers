@@ -1106,6 +1106,27 @@ void RR_resetRadioFakeNetCvars(void)
 }
 
 // Bookmarks
+// Remove control characters (CR, TAB, etc.) and trim whitespace from a bookmark token.
+static std::string StripControlsAndTrim(const std::string& in)
+{
+    // Trim leading/trailing whitespace first
+    size_t start = 0, end = in.size();
+    while (start < end && std::isspace(static_cast<unsigned char>(in[start])))
+        ++start;
+    while (end > start && std::isspace(static_cast<unsigned char>(in[end - 1])))
+        --end;
+
+    // Keep only printable characters (>= 0x20), skipping any embedded control bytes
+    std::string out;
+    out.reserve(end - start);
+    for (size_t i = start; i < end; ++i) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        if (c >= 0x20)
+            out.push_back(static_cast<char>(c));
+    }
+    return out;
+}
+
 void RR_SaveBookmarks(void) {
     if (!bookmarks_processed)
         return;
@@ -1171,10 +1192,10 @@ void RR_LoadBookmarks(void) {
         size_t index = 0;
 
         // Love lambdas
-        std::string char_name = split_token(line, index);
-        std::string char_colour = split_token(line, index);
-        std::string follower_name = split_token(line, index);
-        std::string follower_colour = split_token(line, index);
+        std::string char_name = StripControlsAndTrim(split_token(line, index));
+        std::string char_colour = StripControlsAndTrim(split_token(line, index));
+        std::string follower_name = StripControlsAndTrim(split_token(line, index));
+        std::string follower_colour = StripControlsAndTrim(split_token(line, index));
 
         CONS_Printf("Adding %s %s %s %s\n", char_name.c_str(), char_colour.c_str(), follower_name.c_str(), follower_colour.c_str());
         bool skincolor_valid = false, followercolor_valid = false;
@@ -1202,9 +1223,11 @@ void RR_LoadBookmarks(void) {
             false,
             skincolor_present,
             false,
+            false,
             follower_present,
             false,
             followercolor_present,
+            false,
             false,
             bookmark_child,
         };

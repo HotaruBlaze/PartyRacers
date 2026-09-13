@@ -36,10 +36,12 @@ typedef struct {
     bool skin_usable;
     bool skincolor_present;
     bool skincolor_usable;
+    bool skincolor_locked;       // saved colour is an unlockable we allow anyway
     bool follower_present;
     bool follower_usable;
     bool followercolor_present;
     bool followercolor_usable;
+    bool followercolor_locked;   // saved follower colour is an unlockable we allow anyway
     characterbookmark_t bookmark;
 
     char skin_name[SKINNAMESIZE+1];

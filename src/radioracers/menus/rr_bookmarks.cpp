@@ -61,10 +61,12 @@ static characterbookmarkparent_t M_BuildBookmarkForPlayer(player_t* p)
         true,
         true,
         true,
+        false,
         follower_present,
         follower_present,
         follower_present,
         follower_present,
+        false,
         new_bookmark_child
     };
 
@@ -267,10 +269,18 @@ static bool VerifyBookmarkSkin(INT32 *skin, const char* name)
     return *skin > -1 && R_SkinUsable(g_localplayers[0], *skin, false);
 }
 
-static bool VerifyBookmarkSkinColor(UINT16 *color, const char* name)
+static bool VerifyBookmarkSkinColor(UINT16 *color, const char* name, bool *is_locked)
 {
     *color = get_skincolornum(name);
-    return K_ColorUsable(static_cast<skincolornum_t>(*color), false, true);
+    const skincolornum_t col = static_cast<skincolornum_t>(*color);
+
+    // locked=false: don't treat unlockable colours as unusable, otherwise a saved
+    // bookmark silently falls back to the skin's default colour.
+    *is_locked = (K_ColorUsable(col, false, true) == false) && (K_ColorUsable(col, false, false) == true);
+    if (*is_locked)
+        CONS_Printf("RADIO: Allowing locked colour '%s' due to bookmark.\n", name);
+
+    return K_ColorUsable(col, false, false);
 }
 
 static bool VerifyBookmarkFollowerSkin(INT32 *follower_skin, const char* name)
@@ -279,10 +289,17 @@ static bool VerifyBookmarkFollowerSkin(INT32 *follower_skin, const char* name)
     return *follower_skin > -1 && K_FollowerUsable(*follower_skin);
 }
 
-static bool VerifyBookmarkFollowerSkinColor(UINT16 *color, const char* name)
+static bool VerifyBookmarkFollowerSkinColor(UINT16 *color, const char* name, bool *is_locked)
 {
     *color = get_skincolornum(name);
-    return K_ColorUsable(static_cast<skincolornum_t>(*color), true, true);
+    const skincolornum_t col = static_cast<skincolornum_t>(*color);
+
+    // locked=false: same reasoning as the character colour above.
+    *is_locked = (K_ColorUsable(col, true, true) == false) && (K_ColorUsable(col, true, false) == true);
+    if (*is_locked)
+        CONS_Printf("RADIO: Allowing locked follower colour '%s' due to bookmark.\n", name);
+
+    return K_ColorUsable(col, true, false);
 }
 
 static void VerifySingleBookmark(characterbookmarkparent_t *b)
@@ -291,13 +308,27 @@ static void VerifySingleBookmark(characterbookmarkparent_t *b)
 
     b->skin_usable = VerifyBookmarkSkin(&child->skin, b->skin_name);
 
-    if (b->skincolor_present)
-        b->skincolor_usable = VerifyBookmarkSkinColor(&child->skincolor, b->skincolor_name);
+    CONS_Printf("RADIO: VERIFY skin '%s' -> index=%d name='%s' usable=%d\n",
+        b->skin_name,
+        child->skin,
+        (child->skin > -1) ? skins[child->skin]->name : "N/A",
+        b->skin_usable);
+
+    if (b->skincolor_present) {
+        b->skincolor_usable = VerifyBookmarkSkinColor(&child->skincolor, b->skincolor_name, &b->skincolor_locked);
+        CONS_Printf("RADIO:   skincolor '%s' -> color=%d usable=%d\n",
+            b->skincolor_name, child->skincolor, b->skincolor_usable);
+    }
 
     if (b->follower_present) {
         b->follower_usable = VerifyBookmarkFollowerSkin(&child->follower, b->follower_name);
-        if (b->followercolor_present)
-            b->followercolor_usable = VerifyBookmarkFollowerSkinColor(&child->followercolor, b->followercolor_name);
+        CONS_Printf("RADIO:   follower '%s' -> usable=%d\n", b->follower_name, b->follower_usable);
+
+        if (b->followercolor_present) {
+            b->followercolor_usable = VerifyBookmarkFollowerSkinColor(&child->followercolor, b->followercolor_name, &b->followercolor_locked);
+            CONS_Printf("RADIO:   followercolor '%s' -> color=%d usable=%d\n",
+                b->followercolor_name, child->followercolor, b->followercolor_usable);
+        }
     }
 }
 
@@ -931,13 +962,22 @@ static void M_DrawPreviewWarningsAndErrors(INT16 y, characterbookmarkparent_t* c
     } else {
         if(!current_bookmark_parent->skincolor_present) {
             messages.push_back({PREVIEW_WARNING, "* Character colour missing."});
-        } else {
-            if (!current_bookmark_parent->skincolor_usable) {
+        } else if (!current_bookmark_parent->skincolor_usable) {
+            // The colour fell back to the skin's default (prefcolor). Only warn if
+            // even that default is unusable, so clean default skins don't nag.
+            const INT32 skin = current_bookmark_parent->bookmark.skin;
+            const boolean default_usable = (skin > -1) && K_ColorUsable(static_cast<skincolornum_t>(skins[skin]->prefcolor), false, true);
+            if (!default_usable) {
                 messages.push_back({
                     PREVIEW_WARNING,
                     "* Character colour not found, using default."
                 });
             }
+        } else if (current_bookmark_parent->skincolor_locked) {
+            messages.push_back({
+                PREVIEW_WARNING,
+                "* Allowing locked colour due to bookmark."
+            });
         }
     }
 
@@ -948,13 +988,22 @@ static void M_DrawPreviewWarningsAndErrors(INT16 y, characterbookmarkparent_t* c
         } else {
             if(!current_bookmark_parent->followercolor_present) {
                 messages.push_back({PREVIEW_WARNING, "* Follower colour missing."});
-            } else {
-                if (!current_bookmark_parent->followercolor_usable) {
+            } else if (!current_bookmark_parent->followercolor_usable) {
+                // Same as above: only warn if the follower's default colour is unusable too.
+                const INT32 follower = current_bookmark_parent->bookmark.follower;
+                const boolean default_usable = (follower > -1 && follower < numfollowers)
+                    && K_ColorUsable(static_cast<skincolornum_t>(followers[follower].defaultcolor), true, true);
+                if (!default_usable) {
                     messages.push_back({
                         PREVIEW_WARNING,
                         "* Follower colour not found, using default."
                     });
                 }
+            } else if (current_bookmark_parent->followercolor_locked) {
+                messages.push_back({
+                    PREVIEW_WARNING,
+                    "* Allowing locked follower colour due to bookmark."
+                });
             }
         }
     }
